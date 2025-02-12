@@ -1,6 +1,7 @@
 // src/pages/Home.jsx
 import { useState, useEffect, useRef } from 'react';
 import mapboxgl from 'mapbox-gl';
+import SearchBar from '../components/search/SearchBar';
 import 'mapbox-gl/dist/mapbox-gl.css';
 
 const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
@@ -15,6 +16,8 @@ const Home = () => {
   const [mapCenter, setMapCenter] = useState(DEFAULT_CENTER);
   const [zoom, setZoom] = useState(12);
   const [loading, setLoading] = useState(true);
+  const [searchMarker, setSearchMarker] = useState(null);
+  const [mapInstance, setMapInstance] = useState(null);
 
   useEffect(() => {
     // Get user's location first
@@ -40,7 +43,7 @@ const Home = () => {
     if (loading) return; // Wait until we have location info
     if (map.current) return; // Don't initialize map more than once
 
-    map.current = new mapboxgl.Map({
+    const newMap = new mapboxgl.Map({
       container: mapContainer.current,
       style: 'mapbox://styles/mapbox/streets-v12',
       center: mapCenter,
@@ -48,31 +51,52 @@ const Home = () => {
     });
 
     // Add navigation controls
-    map.current.addControl(new mapboxgl.NavigationControl(), 'top-right');
+    newMap.addControl(new mapboxgl.NavigationControl(), 'top-right');
 
     // Add user location marker if we're using their location
     if (mapCenter !== DEFAULT_CENTER) {
-      new mapboxgl.Marker({
-        color: "#FF0000"
-      })
-        .setLngLat(mapCenter)
-        .addTo(map.current);
-    }
-
+        new mapboxgl.Marker({ color: "#FF0000" })
+          .setLngLat(mapCenter)
+          .addTo(newMap);
+      }
+    map.current = newMap;
+    setMapInstance(newMap);  // Store map instance in state
     // Cleanup function
     return () => {
       if (map.current) {
         map.current.remove();
         map.current = null;
+        setMapInstance(null);
       }
     };
   }, [loading, mapCenter, zoom]);
+
+  const handleSearch = (result) => {
+    // Remove previous search marker if it exists
+    if (searchMarker) {
+      searchMarker.remove();
+    }
+
+    // Add new marker for search result
+    if (result.coordinates && mapInstance) {
+      const newMarker = new mapboxgl.Marker({ color: "#4B5563" })
+        .setLngLat(result.coordinates)
+        .setPopup(new mapboxgl.Popup().setHTML(
+          `<h3 class="font-medium">${result.name}</h3>
+           <p class="text-sm text-gray-600">${result.address || ''}</p>`
+        ))
+        .addTo(mapInstance);
+      
+      setSearchMarker(newMarker);
+    }
+  };
 
   return (
     <div className="flex flex-col h-screen">
       {/* Fixed Header */}
       <header className="bg-white shadow-sm px-4 py-3 fixed top-0 w-full z-10">
         <h1 className="text-xl font-semibold text-blue-600">SensePal</h1>
+        <SearchBar onSearch={handleSearch} mapInstance={mapInstance} />
       </header>
 
       {/* Main Content */}
