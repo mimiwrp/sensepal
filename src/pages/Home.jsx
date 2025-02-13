@@ -2,6 +2,7 @@
 import { useState, useCallback, useRef } from 'react';
 import { GoogleMap, useJsApiLoader, Marker, InfoWindow } from '@react-google-maps/api';
 import PlaceCard from '../components/places/PlaceCard'; 
+import SearchBar from '../components/search/SearchBar';
 
 const libraries = ['places'];
 
@@ -156,7 +157,17 @@ const searchNearbyPlaces = useCallback((location) => {
   return (
     <div className="flex flex-col h-screen">
       <header className="bg-white shadow-sm px-4 py-3 fixed top-0 w-full z-10">
-        <h1 className="text-xl font-semibold text-blue-600">SensePal</h1>
+        <h1 className="text-xl font-semibold text-blue-600 mb-2">SensePal</h1>
+        <SearchBar 
+            onSearch={(place) => {
+            setSelectedPlace(place);
+            if (place.geometry?.location) {
+                map.panTo(place.geometry.location);
+                map.setZoom(15);
+            }
+            }} 
+            placesService={placesService.current}
+        />
       </header>
 
       <main className="flex-1 overflow-y-auto pt-16 pb-16">

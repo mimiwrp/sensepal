@@ -1,63 +1,53 @@
 // src/components/search/SearchBar.jsx
-import { useState, useRef } from 'react';
-import mapboxgl from 'mapbox-gl';
+import { useState } from 'react';
 
-const SearchBar = ({ onSearch, mapInstance }) => {  // Change prop name to be clearer
-  const [searchTerm, setSearchTerm] = useState('');
-  const [searchResults, setSearchResults] = useState([]);
+const SearchBar = ({ onSearch, placesService }) => {
+  const [query, setQuery] = useState('');
+  const [predictions, setPredictions] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
-  const searchTimeout = useRef(null);
 
-  const searchLocation = async (query) => {
-    if (!query) return;
-    
+  const handleSearch = (searchQuery) => {
+    if (!searchQuery || !placesService) return;
+
     setIsLoading(true);
-    try {
-      const response = await fetch(
-        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?access_token=${mapboxgl.accessToken}&types=place,address,poi`
-      );
-      const data = await response.json();
-      
-      const locations = data.features.map(feature => ({
-        id: feature.id,
-        name: feature.text,
-        type: 'location',
-        coordinates: feature.center,
-        address: feature.place_name
-      }));
-      
-      setSearchResults(locations);
-    } catch (error) {
-      console.error('Error searching location:', error);
-    } finally {
+    const request = {
+      query: searchQuery,
+      fields: ['name', 'geometry', 'formatted_address', 'place_id']
+    };
+
+    placesService.findPlaceFromQuery(request, (results, status) => {
       setIsLoading(false);
-    }
+      if (status === window.google.maps.places.PlacesServiceStatus.OK && results) {
+        onSearch(results[0]);
+        setQuery('');
+        setPredictions([]);
+      }
+    });
   };
 
-  const handleSearch = (e) => {
+  const handleInputChange = (e) => {
     const value = e.target.value;
-    setSearchTerm(value);
-    
-    if (searchTimeout.current) {
-      clearTimeout(searchTimeout.current);
+    setQuery(value);
+
+    if (!value) {
+      setPredictions([]);
+      return;
     }
-    
-    searchTimeout.current = setTimeout(() => {
-      searchLocation(value);
-    }, 300);
+
+    // Use Google Places Autocomplete
+    const autocompleteService = new window.google.maps.places.AutocompleteService();
+    autocompleteService.getPlacePredictions({
+      input: value,
+      types: ['establishment']
+    }, (predictions, status) => {
+      if (status === window.google.maps.places.PlacesServiceStatus.OK && predictions) {
+        setPredictions(predictions);
+      }
+    });
   };
 
-  const handleResultClick = (result) => {
-    if (result.coordinates && mapInstance) {  // Check if map exists
-      mapInstance.flyTo({
-        center: result.coordinates,
-        zoom: 15
-      });
-    }
-    
-    onSearch(result);
-    setSearchResults([]);
-    setSearchTerm('');
+  const handlePredictionClick = (prediction) => {
+    handleSearch(prediction.description);
   };
 
   return (
@@ -65,9 +55,9 @@ const SearchBar = ({ onSearch, mapInstance }) => {  // Change prop name to be cl
       <div className="relative">
         <input
           type="text"
-          value={searchTerm}
-          onChange={handleSearch}
-          placeholder="Search places, areas, or types..."
+          value={query}
+          onChange={handleInputChange}
+          placeholder="Search for sensory-friendly places..."
           className="w-full px-4 py-2 rounded-lg border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
         />
         {isLoading && (
@@ -77,18 +67,16 @@ const SearchBar = ({ onSearch, mapInstance }) => {  // Change prop name to be cl
         )}
       </div>
 
-      {searchResults.length > 0 && (
+      {predictions.length > 0 && (
         <div className="absolute w-full mt-1 bg-white rounded-lg shadow-lg border border-gray-200 max-h-60 overflow-y-auto z-50">
-          {searchResults.map((result) => (
+          {predictions.map((prediction) => (
             <button
-              key={result.id}
-              onClick={() => handleResultClick(result)}
+              key={prediction.place_id}
+              onClick={() => handlePredictionClick(prediction)}
               className="w-full px-4 py-2 text-left hover:bg-gray-100 focus:bg-gray-100 focus:outline-none"
             >
-              <div className="font-medium">{result.name}</div>
-              {result.address && (
-                <div className="text-sm text-gray-600">{result.address}</div>
-              )}
+              <div className="font-medium">{prediction.structured_formatting.main_text}</div>
+              <div className="text-sm text-gray-600">{prediction.structured_formatting.secondary_text}</div>
             </button>
           ))}
         </div>
