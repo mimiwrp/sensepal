@@ -22,22 +22,41 @@ const Home = () => {
   const [nearbyPlaces, setNearbyPlaces] = useState([]);
   const [map, setMap] = useState(null);
   const placesService = useRef(null);
+  const getPlaceDetails = useCallback((place) => {
+    if (!placesService.current) return;
+  
+    const request = {
+      placeId: place.place_id,
+      fields: ['name', 'geometry', 'formatted_address', 'rating', 'website', 'opening_hours', 'types', 'vicinity']
+    };
+  
+    placesService.current.getDetails(request, (placeResult, status) => {
+      if (status === window.google.maps.places.PlacesServiceStatus.OK) {
+        setSelectedPlace(placeResult);
+        if (placeResult.geometry?.location) {
+          map.panTo(placeResult.geometry.location);
+          map.setZoom(15);
+        }
+      }
+    });
+  }, [map]);
+
 
   const { isLoaded, loadError } = useJsApiLoader({
     googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY,
     libraries,
   });
 
-// Update the searchNearbyPlaces function in Home.jsx
-const searchNearbyPlaces = useCallback((location) => {
-    if (!map || !placesService.current) return;
-  
-    // First search for places with sensory-friendly keywords
-    const keywordSearch = {
-      location: new window.google.maps.LatLng(location.lat, location.lng),
-      radius: '5000',
-      keyword: 'sensory friendly OR quiet space OR autism friendly',
-    };
+    // Update the searchNearbyPlaces function in Home.jsx
+    const searchNearbyPlaces = useCallback((location) => {
+        if (!map || !placesService.current) return;
+    
+        // First search for places with sensory-friendly keywords
+        const keywordSearch = {
+        location: new window.google.maps.LatLng(location.lat, location.lng),
+        radius: '5000',
+        keyword: 'sensory friendly OR quiet space OR autism friendly',
+        };
   
     // Then search for specific types of places that are typically sensory-friendly
     const typeSearch = {
@@ -160,11 +179,7 @@ const searchNearbyPlaces = useCallback((location) => {
         <h1 className="text-xl font-semibold text-blue-600 mb-2">SensePal</h1>
         <SearchBar 
             onSearch={(place) => {
-            setSelectedPlace(place);
-            if (place.geometry?.location) {
-                map.panTo(place.geometry.location);
-                map.setZoom(15);
-            }
+            getPlaceDetails(place);
             }} 
             placesService={placesService.current}
         />
@@ -227,18 +242,52 @@ const searchNearbyPlaces = useCallback((location) => {
               />
             ))}
             {selectedPlace && (
-              <InfoWindow
+            <InfoWindow
                 position={selectedPlace.geometry.location}
                 onCloseClick={() => setSelectedPlace(null)}
-              >
-                <div className="p-2">
-                  <h3 className="font-medium">{selectedPlace.name}</h3>
-                  <p className="text-sm text-gray-600">{selectedPlace.vicinity}</p>
-                  {selectedPlace.rating && (
-                    <p className="text-sm mt-1">Rating: {selectedPlace.rating} ⭐</p>
-                  )}
+            >
+                <div className="p-3 min-w-[200px] text-gray-900">
+                <h3 className="font-medium text-lg">{selectedPlace.name}</h3>
+                <p className="text-sm text-gray-600 mt-1">{selectedPlace.vicinity || selectedPlace.formatted_address}</p>
+                {selectedPlace.rating && (
+                    <p className="text-sm mt-2 flex items-center gap-1">
+                    <span>Rating:</span>
+                    <span className="font-medium">{selectedPlace.rating}</span>
+                    <span className="text-yellow-500">⭐</span>
+                    </p>
+                )}
+                {selectedPlace.opening_hours && (
+                    <p className="text-sm mt-2 text-gray-600">
+                    {selectedPlace.opening_hours.open_now ? '✅ Open Now' : '❌ Closed'}
+                    </p>
+                )}
+                <div className="flex gap-2 mt-3">
+                    <button
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        window.open(
+                        `https://www.google.com/maps/dir/?api=1&destination=${selectedPlace.name}&destination_place_id=${selectedPlace.place_id}`,
+                        '_blank'
+                        );
+                    }}
+                    className="text-sm px-3 py-1 bg-blue-100 text-blue-700 rounded-full hover:bg-blue-200"
+                    >
+                    🗺️ Directions
+                    </button>
+                    {selectedPlace.website && (
+                    <button
+                        onClick={(e) => {
+                        e.stopPropagation();
+                        window.open(selectedPlace.website, '_blank');
+                        }}
+                        className="text-sm px-3 py-1 bg-blue-100 text-blue-700 rounded-full hover:bg-blue-200"
+                    >
+                        🌐 Website
+                    </button>
+                    )}
                 </div>
-              </InfoWindow>
+                </div>
+            </InfoWindow>
             )}
           </GoogleMap>
         </div>
