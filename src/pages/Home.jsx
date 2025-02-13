@@ -1,111 +1,170 @@
 // src/pages/Home.jsx
-import { useState, useEffect, useRef } from 'react';
-import mapboxgl from 'mapbox-gl';
-import SearchBar from '../components/search/SearchBar';
-import 'mapbox-gl/dist/mapbox-gl.css';
+import { useState, useCallback, useRef } from 'react';
+import { GoogleMap, useJsApiLoader, Marker, InfoWindow } from '@react-google-maps/api';
+import PlaceCard from '../components/places/PlaceCard'; 
 
-const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN;
-mapboxgl.accessToken = MAPBOX_TOKEN;
+const libraries = ['places'];
 
-// Default coordinates (we'll update these with user's location)
-const DEFAULT_CENTER = [-122.4376, 37.7577]; // San Francisco coordinates
+const mapOptions = {
+    disableDefaultUI: false,
+    zoomControl: true,
+    mapTypeControl: false,
+    scaleControl: true,
+    streetViewControl: false,
+    rotateControl: false,
+    fullscreenControl: true,
+  };
 
 const Home = () => {
-  const mapContainer = useRef(null);
-  const map = useRef(null);
-  const [mapCenter, setMapCenter] = useState(DEFAULT_CENTER);
-  const [zoom, setZoom] = useState(12);
-  const [loading, setLoading] = useState(true);
-  const [searchMarker, setSearchMarker] = useState(null);
-  const [mapInstance, setMapInstance] = useState(null);
+  const [selectedPlace, setSelectedPlace] = useState(null);
+  const [userLocation, setUserLocation] = useState(null);
+  const [nearbyPlaces, setNearbyPlaces] = useState([]);
+  const [map, setMap] = useState(null);
+  const placesService = useRef(null);
 
-  useEffect(() => {
-    // Get user's location first
-    if ("geolocation" in navigator) {
+  const { isLoaded, loadError } = useJsApiLoader({
+    googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY,
+    libraries,
+  });
+
+// Update the searchNearbyPlaces function in Home.jsx
+const searchNearbyPlaces = useCallback((location) => {
+    if (!map || !placesService.current) return;
+  
+    // First search for places with sensory-friendly keywords
+    const keywordSearch = {
+      location: new window.google.maps.LatLng(location.lat, location.lng),
+      radius: '5000',
+      keyword: 'sensory friendly OR quiet space OR autism friendly',
+    };
+  
+    // Then search for specific types of places that are typically sensory-friendly
+    const typeSearch = {
+      location: new window.google.maps.LatLng(location.lat, location.lng),
+      radius: '5000',
+      type: ['library', 'museum', 'park', 'aquarium', 'art_gallery'],
+      keyword: 'quiet OR peaceful OR calm'
+    };
+  
+    // Additional search for community centers and therapy centers
+    const additionalSearch = {
+      location: new window.google.maps.LatLng(location.lat, location.lng),
+      radius: '5000',
+      keyword: 'occupational therapy OR community center OR sensory gym OR children therapy'
+    };
+  
+    // Perform all searches and combine results
+    Promise.all([
+      new Promise((resolve) => {
+        placesService.current.nearbySearch(keywordSearch, (results, status) => {
+          if (status === window.google.maps.places.PlacesServiceStatus.OK && results) {
+            resolve(results);
+          } else {
+            resolve([]);
+          }
+        });
+      }),
+      new Promise((resolve) => {
+        placesService.current.nearbySearch(typeSearch, (results, status) => {
+          if (status === window.google.maps.places.PlacesServiceStatus.OK && results) {
+            resolve(results);
+          } else {
+            resolve([]);
+          }
+        });
+      }),
+      new Promise((resolve) => {
+        placesService.current.nearbySearch(additionalSearch, (results, status) => {
+          if (status === window.google.maps.places.PlacesServiceStatus.OK && results) {
+            resolve(results);
+          } else {
+            resolve([]);
+          }
+        });
+      })
+    ]).then((allResults) => {
+      // Combine and deduplicate results based on place_id
+      const combinedResults = Array.from(
+        new Map(
+          allResults.flat().map(place => [place.place_id, place])
+        ).values()
+      );
+  
+      // Sort by rating (if available)
+      const sortedResults = combinedResults.sort((a, b) => {
+        if (!a.rating) return 1;
+        if (!b.rating) return -1;
+        return b.rating - a.rating;
+      });
+  
+      console.log('Found places:', sortedResults);
+      setNearbyPlaces(sortedResults);
+    });
+  }, [map]);
+
+  const onMapLoad = useCallback((mapInstance) => {
+    setMap(mapInstance);
+    // Get user's location
+    placesService.current = new window.google.maps.places.PlacesService(mapInstance);
+    if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
-          const userLocation = [position.coords.longitude, position.coords.latitude];
-          setMapCenter(userLocation);
-          setLoading(false);
+          const location = {
+            lat: position.coords.latitude,
+            lng: position.coords.longitude
+          };
+          setUserLocation(location);
+          mapInstance.panTo(location);
+          searchNearbyPlaces(location);
         },
         (error) => {
-          console.log("Geolocation error:", error);
-          setLoading(false);
+          console.error("Error getting location:", error);
+          const defaultLocation = { lat: 37.7749, lng: -122.4194 };
+          setUserLocation(defaultLocation);
+          mapInstance.panTo(defaultLocation);
+          searchNearbyPlaces(defaultLocation);
         }
       );
-    } else {
-      setLoading(false);
     }
-  }, []);
+  }, [searchNearbyPlaces]);
 
-  // Initialize map after we have the center coordinates
-  useEffect(() => {
-    if (loading) return; // Wait until we have location info
-    if (map.current) return; // Don't initialize map more than once
+  if (loadError) {
+    return (
+        <div className="flex items-center justify-center h-screen">
+          <div className="text-red-600 p-4 text-center">
+            <p>Error loading maps. Please make sure you have:</p>
+            <ul className="list-disc list-inside mt-2">
+              <li>Enabled billing in Google Cloud Console</li>
+              <li>Enabled Maps JavaScript API</li>
+              <li>Enabled Places API</li>
+              <li>Created a valid API key</li>
+            </ul>
+          </div>
+        </div>
+      );
+  }
 
-    const newMap = new mapboxgl.Map({
-      container: mapContainer.current,
-      style: 'mapbox://styles/mapbox/streets-v12',
-      center: mapCenter,
-      zoom: zoom
-    });
+  if (!isLoaded) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="animate-spin h-8 w-8 border-4 border-blue-500 rounded-full border-t-transparent"></div>
+      </div>
+    );
+  }
 
-    // Add navigation controls
-    newMap.addControl(new mapboxgl.NavigationControl(), 'top-right');
-
-    // Add user location marker if we're using their location
-    if (mapCenter !== DEFAULT_CENTER) {
-        new mapboxgl.Marker({ color: "#FF0000" })
-          .setLngLat(mapCenter)
-          .addTo(newMap);
-      }
-    map.current = newMap;
-    setMapInstance(newMap);  // Store map instance in state
-    // Cleanup function
-    return () => {
-      if (map.current) {
-        map.current.remove();
-        map.current = null;
-        setMapInstance(null);
-      }
-    };
-  }, [loading, mapCenter, zoom]);
-
-  const handleSearch = (result) => {
-    // Remove previous search marker if it exists
-    if (searchMarker) {
-      searchMarker.remove();
-    }
-
-    // Add new marker for search result
-    if (result.coordinates && mapInstance) {
-      const newMarker = new mapboxgl.Marker({ color: "#4B5563" })
-        .setLngLat(result.coordinates)
-        .setPopup(new mapboxgl.Popup().setHTML(
-          `<h3 class="font-medium">${result.name}</h3>
-           <p class="text-sm text-gray-600">${result.address || ''}</p>`
-        ))
-        .addTo(mapInstance);
-      
-      setSearchMarker(newMarker);
-    }
-  };
 
   return (
     <div className="flex flex-col h-screen">
-      {/* Fixed Header */}
       <header className="bg-white shadow-sm px-4 py-3 fixed top-0 w-full z-10">
         <h1 className="text-xl font-semibold text-blue-600">SensePal</h1>
-        <SearchBar onSearch={handleSearch} mapInstance={mapInstance} />
       </header>
 
-      {/* Main Content */}
       <main className="flex-1 overflow-y-auto pt-16 pb-16">
         {/* Quick Filters */}
         <div className="px-4 py-3 bg-white shadow-sm">
           <div className="overflow-x-auto">
             <div className="flex gap-2 w-max pb-2">
-              <button className="px-4 py-2 rounded-full bg-blue-100 text-blue-700 whitespace-nowrap">
+            <button className="px-4 py-2 rounded-full bg-blue-100 text-blue-700 whitespace-nowrap">
                 🔈 Quiet Places
               </button>
               <button className="px-4 py-2 rounded-full bg-blue-100 text-blue-700 whitespace-nowrap">
@@ -118,82 +177,77 @@ const Home = () => {
           </div>
         </div>
 
-        {/* Map Container */}
-        <div className="relative h-[50vh]">
-          {loading && (
-            <div className="absolute inset-0 flex items-center justify-center bg-gray-100">
-              <span className="text-gray-600">Loading map...</span>
-            </div>
-          )}
-          <div ref={mapContainer} className="h-full w-full" />
+        {/* Map */}
+        <div className="h-[50vh] relative">
+          <GoogleMap
+            mapContainerClassName="w-full h-full"
+            center={userLocation || { lat: 37.7749, lng: -122.4194 }}
+            zoom={13}
+            onLoad={onMapLoad}
+            options={mapOptions}
+          >
+            {userLocation && (
+              <Marker
+                position={userLocation}
+                icon={{
+                  path: window.google.maps.SymbolPath.CIRCLE,
+                  fillColor: '#1E40AF',
+                  fillOpacity: 1,
+                  strokeColor: '#1E40AF',
+                  strokeWeight: 2,
+                  scale: 8
+                }}
+                title="Your Location"
+              />
+            )}
+            {nearbyPlaces.map((place) => (
+              <Marker
+                key={place.place_id}
+                position={place.geometry.location}
+                onClick={() => setSelectedPlace(place)}
+                icon={{
+                  path: window.google.maps.SymbolPath.CIRCLE,
+                  fillColor: '#3B82F6',
+                  fillOpacity: 1,
+                  strokeColor: '#2563EB',
+                  strokeWeight: 2,
+                  scale: 8
+                }}
+              />
+            ))}
+            {selectedPlace && (
+              <InfoWindow
+                position={selectedPlace.geometry.location}
+                onCloseClick={() => setSelectedPlace(null)}
+              >
+                <div className="p-2">
+                  <h3 className="font-medium">{selectedPlace.name}</h3>
+                  <p className="text-sm text-gray-600">{selectedPlace.vicinity}</p>
+                  {selectedPlace.rating && (
+                    <p className="text-sm mt-1">Rating: {selectedPlace.rating} ⭐</p>
+                  )}
+                </div>
+              </InfoWindow>
+            )}
+          </GoogleMap>
         </div>
 
         {/* Places List */}
         <div className="px-4 py-4">
-          <h2 className="text-lg font-semibold mb-3">Nearby Places</h2>
+          <h2 className="text-lg font-semibold mb-3">
+            Nearby Sensory-Friendly Places ({nearbyPlaces.length})
+          </h2>
           <div className="space-y-3">
-            {[
-              {
-                id: 1,
-                name: "Quiet Library",
-                type: "Library",
-                distance: "0.5 mi",
-                noiseLevel: "Quiet",
-                hasBreakRoom: true
-              },
-              {
-                id: 2,
-                name: "Sensory Museum",
-                type: "Museum",
-                distance: "1.2 mi",
-                noiseLevel: "Moderate",
-                hasBreakRoom: true
-              }
-            ].map(place => (
-              <div 
-                key={place.id}
-                className="bg-white rounded-lg p-4 shadow-sm active:bg-gray-50"
-              >
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h3 className="font-medium">{place.name}</h3>
-                    <p className="text-sm text-gray-600 mt-1">
-                      {place.type} • {place.distance}
-                    </p>
-                  </div>
-                  <span className="text-sm text-blue-600">Details →</span>
-                </div>
-                <div className="flex gap-2 mt-2">
-                  <span className="text-xs px-2 py-1 bg-blue-50 text-blue-700 rounded-full">
-                    🔈 {place.noiseLevel}
-                  </span>
-                  {place.hasBreakRoom && (
-                    <span className="text-xs px-2 py-1 bg-blue-50 text-blue-700 rounded-full">
-                      🚪 Break Room
-                    </span>
-                  )}
-                </div>
-              </div>
+            {nearbyPlaces.map((place) => (
+              <PlaceCard
+              key={place.place_id}
+              place={place}
+              onClick={setSelectedPlace}
+              />
             ))}
           </div>
         </div>
       </main>
-
-      {/* Bottom Navigation */}
-      <nav className="bg-white shadow-lg fixed bottom-0 w-full flex justify-around items-center py-3 px-4">
-        <button className="text-blue-600 flex flex-col items-center">
-          <span className="text-xl">🏠</span>
-          <span className="text-xs">Home</span>
-        </button>
-        <button className="text-gray-500 flex flex-col items-center">
-          <span className="text-xl">🗺️</span>
-          <span className="text-xs">Map</span>
-        </button>
-        <button className="text-gray-500 flex flex-col items-center">
-          <span className="text-xl">❤️</span>
-          <span className="text-xs">Saved</span>
-        </button>
-      </nav>
     </div>
   );
 };
